@@ -23,7 +23,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
-      branch_ref: ${{ steps.variables.outputs.branch_ref }}
       pr_type: ${{ steps.variables.outputs.pr_type }}
       pr_number: ${{ steps.variables.outputs.pr_number }}
       commit_hash: ${{ steps.variables.outputs.commit_hash }}
@@ -40,7 +39,6 @@ jobs:
       - name: Store variables
         id: variables
         run: |
-          echo "branch_ref=$(jq -r '.branch_ref' trigger-information.json)" >> "$GITHUB_OUTPUT"
           echo "pr_type=$(jq -r '.pr_type' trigger-information.json)" >> "$GITHUB_OUTPUT"
           echo "pr_number=$(jq -r '.pr_number' trigger-information.json)" >> "$GITHUB_OUTPUT"
           echo "commit_hash=$(jq -r '.commit_hash' trigger-information.json)" >> "$GITHUB_OUTPUT"
@@ -48,29 +46,32 @@ jobs:
   create-images:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    if: ${{ needs.setup.outputs.pr_type != 'closed' }}
+    if: ${{ needs.setup.outputs.pr_type != 'closed' && github.event.workflow_run.head_repository.full_name == github.repository }}
     needs: setup
     steps:
       - name: Validate outputs from setup jobs
         env:
-          BRANCH_REF: ${{ needs.setup.outputs.branch_ref }}
           PR_TYPE: ${{ needs.setup.outputs.pr_type }}
           PR_NUMBER: ${{ needs.setup.outputs.pr_number }}
           COMMIT_HASH: ${{ needs.setup.outputs.commit_hash }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           fail=0
-          for var in BRANCH_REF PR_TYPE PR_NUMBER COMMIT_HASH; do
+          for var in PR_TYPE PR_NUMBER COMMIT_HASH HEAD_SHA; do
             if [ -z "${!var}" ]; then
               echo "::error::Required output $var is empty"
               fail=1
             fi
           done
           [ "$fail" -eq 0 ] || exit 1
-          echo "branch_ref=$BRANCH_REF, pr_type=$PR_TYPE, pr_number=$PR_NUMBER, commit_hash=$COMMIT_HASH"
+          echo "pr_type=$PR_TYPE, pr_number=$PR_NUMBER, commit_hash=$COMMIT_HASH, head_sha=$HEAD_SHA"
+      # Checkout the workflow_run event SHA, never an artifact-selected ref.
+      # Artifact SHAs can bypass actions/checkout's fork-PR guard.
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.setup.outputs.branch_ref }}
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
 
       - name: Build and push exporter test image to Quay.io
         uses: "./.github/workflow_templates/build_push_exporters"
